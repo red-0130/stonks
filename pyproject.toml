@@ -1,0 +1,21 @@
+[project]
+name = "stonks"
+version = "0.1.0"
+description = "Stock analysis app with fundamental ratings, technical analysis, and trade strategies"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit>=1.45.0",
+    "yfinance>=0.2.55",
+    "plotly>=6.1.0",
+    "pandas>=2.2.0",
+    "numpy>=2.2.0",
+    "ta>=0.11.0",
+]
+
+[project.scripts]
+stonks = "stonks:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
