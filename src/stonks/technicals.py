@@ -29,6 +29,25 @@ class TechnicalSignal:
 
 
 @dataclass
+class ProjectedPrice:
+    """Projected price targets based on analyst consensus and technical levels."""
+
+    current_price: float | None = None
+    target_mean: float | None = None
+    target_high: float | None = None
+    target_low: float | None = None
+    target_median: float | None = None
+    num_analysts: int | None = None
+    upside_pct: float | None = None
+    pivot: float | None = None
+    resistance_1: float | None = None
+    resistance_2: float | None = None
+    support_1: float | None = None
+    support_2: float | None = None
+    chart: go.Figure | None = None
+
+
+@dataclass
 class TechnicalReport:
     """Full technical analysis report."""
 
@@ -36,6 +55,7 @@ class TechnicalReport:
     overall: str  # "Buy", "Sell", "Hold"
     summary: str
     chart: go.Figure | None = None
+    projected_price: ProjectedPrice | None = None
 
 
 def _compute_rsi(close: pd.Series, window: int = 14) -> TechnicalSignal:
@@ -238,16 +258,245 @@ def _build_chart(stock: StockData) -> go.Figure | None:
     return fig
 
 
+def _build_forecast_chart(
+    stock: StockData,
+    current_price: float | None,
+    target_high: float | None,
+    target_mean: float | None,
+    target_low: float | None,
+    resistance_2: float | None,
+    resistance_1: float | None,
+    pivot: float | None,
+    support_1: float | None,
+    support_2: float | None,
+) -> go.Figure | None:
+    """Build a Plotly price target forecast chart with historical prices and 12M projection cone."""
+    hist = stock.history
+    if hist.empty or current_price is None:
+        return None
+
+    last_date = hist.index[-1]
+    future_date = last_date + pd.Timedelta(days=365)
+    dates_fc = [last_date, future_date]
+
+    # Resolve target bounds (fallback to technical levels if analyst targets unavailable)
+    t_high = (
+        target_high
+        if target_high
+        else (resistance_2 if resistance_2 else current_price * 1.15)
+    )
+    t_mean = (
+        target_mean
+        if target_mean
+        else (pivot if pivot else current_price * 1.05)
+    )
+    t_low = (
+        target_low
+        if target_low
+        else (support_2 if support_2 else current_price * 0.85)
+    )
+
+    fig = go.Figure()
+
+    # 1. Historical close price series
+    fig.add_trace(go.Scatter(
+        x=hist.index,
+        y=hist["Close"],
+        mode="lines",
+        name="Historical Price",
+        line=dict(color="#38bdf8", width=2.5),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Close: $%{y:.2f}<extra></extra>",
+    ))
+
+    # 2. Bear Target (Low bound)
+    fig.add_trace(go.Scatter(
+        x=dates_fc,
+        y=[current_price, t_low],
+        mode="lines",
+        name=f"Bear Target (${t_low:,.2f})",
+        line=dict(color="#ef5350", width=2, dash="dash"),
+        hovertemplate="Bear Target: $%{y:.2f}<extra></extra>",
+    ))
+
+    # 3. Bull Target (High bound) with fill to Low bound (creates the forecast cone)
+    fig.add_trace(go.Scatter(
+        x=dates_fc,
+        y=[current_price, t_high],
+        mode="lines",
+        name=f"Bull Target (${t_high:,.2f})",
+        line=dict(color="#26a69a", width=2, dash="dash"),
+        fill="tonexty",
+        fillcolor="rgba(56, 189, 248, 0.12)",
+        hovertemplate="Bull Target: $%{y:.2f}<extra></extra>",
+    ))
+
+    # 4. Consensus Mean Target line
+    fig.add_trace(go.Scatter(
+        x=dates_fc,
+        y=[current_price, t_mean],
+        mode="lines+markers",
+        name=f"Consensus Target (${t_mean:,.2f})",
+        line=dict(color="#fbbf24", width=2.5, dash="dot"),
+        marker=dict(size=[6, 9], color="#fbbf24"),
+        hovertemplate="Mean Target: $%{y:.2f}<extra></extra>",
+    ))
+
+    # 5. Current Price Marker
+    fig.add_trace(go.Scatter(
+        x=[last_date],
+        y=[current_price],
+        mode="markers+text",
+        name="Current Price",
+        marker=dict(color="#ffffff", size=9, symbol="circle"),
+        text=[f"  ${current_price:,.2f}"],
+        textposition="top right",
+        textfont=dict(color="#ffffff", size=11),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # 6. Current Price Level reference line
+    fig.add_trace(go.Scatter(
+        x=dates_fc,
+        y=[current_price, current_price],
+        mode="lines",
+        name="Current Price Level",
+        line=dict(color="rgba(255, 255, 255, 0.35)", width=1, dash="dot"),
+        hoverinfo="skip",
+    ))
+
+    # Target label annotations on the right edge
+    high_diff = ((t_high / current_price) - 1.0) * 100
+    mean_diff = ((t_mean / current_price) - 1.0) * 100
+    low_diff = ((t_low / current_price) - 1.0) * 100
+
+    fig.add_annotation(
+        x=future_date, y=t_high,
+        text=f"<b>High: ${t_high:,.2f}</b> ({high_diff:+.1f}%)",
+        showarrow=False,
+        xanchor="left", yanchor="middle",
+        font=dict(color="#26a69a", size=11),
+    )
+    fig.add_annotation(
+        x=future_date, y=t_mean,
+        text=f"<b>Mean: ${t_mean:,.2f}</b> ({mean_diff:+.1f}%)",
+        showarrow=False,
+        xanchor="left", yanchor="middle",
+        font=dict(color="#fbbf24", size=11),
+    )
+    fig.add_annotation(
+        x=future_date, y=t_low,
+        text=f"<b>Low: ${t_low:,.2f}</b> ({low_diff:+.1f}%)",
+        showarrow=False,
+        xanchor="left", yanchor="middle",
+        font=dict(color="#ef5350", size=11),
+    )
+
+    fig.update_layout(
+        title="12-Month Price Target Forecast & Consensus Projection Cone",
+        template="plotly_dark",
+        height=520,
+        hovermode="x unified",
+        xaxis=dict(
+            title="Date",
+            showgrid=True,
+            gridcolor="rgba(255, 255, 255, 0.08)",
+        ),
+        yaxis=dict(
+            title="Price ($)",
+            showgrid=True,
+            gridcolor="rgba(255, 255, 255, 0.08)",
+            tickprefix="$",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        margin=dict(l=50, r=140, t=75, b=40),
+    )
+
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
+def compute_projected_price(stock: StockData) -> ProjectedPrice:
+    """Compute projected price targets from analyst consensus and technical pivot levels."""
+    current = stock.current_price
+    target_mean = stock.info.get("targetMeanPrice")
+    target_high = stock.info.get("targetHighPrice")
+    target_low = stock.info.get("targetLowPrice")
+    target_median = stock.info.get("targetMedianPrice")
+    num_analysts = stock.info.get("numberOfAnalystOpinions")
+
+    upside_pct = None
+    if current and target_mean:
+        upside_pct = ((target_mean / current) - 1.0) * 100.0
+
+    pivot = None
+    r1 = None
+    r2 = None
+    s1 = None
+    s2 = None
+
+    if not stock.history.empty and len(stock.history) >= 5:
+        # Use recent 20 bars (or all bars if fewer) for pivot calculation
+        recent = stock.history.iloc[-20:] if len(stock.history) >= 20 else stock.history
+        high_val = float(recent["High"].max())
+        low_val = float(recent["Low"].min())
+        close_val = float(stock.history["Close"].iloc[-1])
+
+        p = (high_val + low_val + close_val) / 3.0
+        pivot = p
+        r1 = (2.0 * p) - low_val
+        r2 = p + (high_val - low_val)
+        s1 = (2.0 * p) - high_val
+        s2 = p - (high_val - low_val)
+
+    chart = _build_forecast_chart(
+        stock=stock,
+        current_price=current,
+        target_high=target_high,
+        target_mean=target_mean,
+        target_low=target_low,
+        resistance_2=r2,
+        resistance_1=r1,
+        pivot=pivot,
+        support_1=s1,
+        support_2=s2,
+    )
+
+    return ProjectedPrice(
+        current_price=current,
+        target_mean=target_mean,
+        target_high=target_high,
+        target_low=target_low,
+        target_median=target_median,
+        num_analysts=num_analysts,
+        upside_pct=upside_pct,
+        pivot=pivot,
+        resistance_1=r1,
+        resistance_2=r2,
+        support_1=s1,
+        support_2=s2,
+        chart=chart,
+    )
+
+
 def analyse_technicals(stock: StockData) -> TechnicalReport:
     """Run full technical analysis on the stock."""
+    projected = compute_projected_price(stock)
+
     if stock.history.empty:
         return TechnicalReport(
             signals=[], overall="Hold",
             summary="No historical data available for technical analysis.",
+            projected_price=projected,
         )
 
     close = stock.history["Close"]
@@ -282,5 +531,6 @@ def analyse_technicals(stock: StockData) -> TechnicalReport:
         overall=overall,
         summary="\n".join(summary_parts),
         chart=chart,
+        projected_price=projected,
     )
 
