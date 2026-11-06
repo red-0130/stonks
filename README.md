@@ -72,55 +72,45 @@ bun run dev --host 0.0.0.0 --port 5173
 
 ---
 
-## 🐳 Container Deployment
+## 🐳 Container Deployment (Single-Image)
 
-The application includes a production-ready, multi-stage `Dockerfile` and `docker-compose.yml` that bundles the compiled React frontend and FastAPI backend into a single self-contained container.
+The application is packaged as a single, self-contained multi-stage container image. It runs a dedicated **Nginx frontend web server** on port **5173** that serves the compiled React app and reverse-proxies API requests to an internal, unexposed FastAPI backend.
 
-### Using Docker Compose (Recommended)
+### Quick Start with Pre-Built Image (GHCR)
 
-To build and run the unified container:
+Every push to `main` automatically builds and publishes the latest single-image container to the **GitHub Container Registry (GHCR)** via GitHub Actions:
+
 ```bash
-docker compose up --build -d
+# Pull the latest image
+docker pull ghcr.io/red-0130/stonks:latest
+
+# Run the container (Exposes frontend port 5173)
+docker run -d -p 5173:5173 --name stonks ghcr.io/red-0130/stonks:latest
 ```
-- **Application URL**: `http://localhost:8000`
-- **API Health**: `http://localhost:8000/api/health`
-- **API Docs**: `http://localhost:8000/docs`
+
+- **Application URL**: `http://localhost:5173`
+- **API Health**: `http://localhost:5173/api/health`
+- **API Docs**: `http://localhost:5173/docs`
 
 To stop the container:
 ```bash
-docker compose down
+docker stop stonks && docker rm stonks
 ```
 
-### Using Docker Directly
+### Building & Running Locally
 
-1. **Build the container image**:
+1. **Build the single image**:
 ```bash
 docker build -t stonks-app .
 ```
 
 2. **Run the container**:
 ```bash
-docker run -d -p 8000:8000 --name stonks stonks-app
+docker run -d -p 5173:5173 --name stonks stonks-app
 ```
 
-3. **Cloud Deployments (Cloud Run, ECS, Fly.io, K8s)**:
-The container automatically binds to the `$PORT` environment variable (defaults to `8000`) and runs as an unprivileged user (`appuser`, UID `10001`):
+3. **Cloud Deployments (Cloud Run, ECS, Fly.io, Kubernetes)**:
+The frontend web server dynamically binds to the `$PORT` environment variable (defaults to `5173`):
 ```bash
 docker run -d -e PORT=8080 -p 8080:8080 stonks-app
-```
-
----
-
-## 📦 GitHub Container Registry (GHCR)
-
-The repository includes a GitHub Actions CI/CD workflow ([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)) that automatically builds and publishes the production image to **ghcr.io** on every push to the `main` branch.
-
-### Pulling and Running the Pre-Built Image
-
-```bash
-# Pull the latest image from GHCR
-docker pull ghcr.io/red-0130/stonks:latest
-
-# Run the container
-docker run -d -p 8000:8000 --name stonks ghcr.io/red-0130/stonks:latest
 ```
