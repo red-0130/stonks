@@ -1,0 +1,36 @@
+# Version control and agent data
+.git
+.gitignore
+.github
+.agents
+.gemini
+
+# Python virtual environments & bytecode
+backend/.venv
+*/.venv
+__pycache__
+*/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+
+# Node / Frontend build artifacts
+frontend/node_modules
+*/node_modules
+frontend/dist
+*/dist
+.npm
+.bun
+
+# Environment and secrets
+.env
+.env.*
+*.local
+
+# System & editor files
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.log

@@ -69,3 +69,42 @@ bun run dev --host 0.0.0.0 --port 5173
 
 - **Frontend URL**: `http://localhost:5173`
 - **Backend API**: `http://localhost:8000` (API Docs at `http://localhost:8000/docs`)
+
+---
+
+## 🐳 Container Deployment
+
+The application includes a production-ready, multi-stage `Dockerfile` and `docker-compose.yml` that bundles the compiled React frontend and FastAPI backend into a single self-contained container.
+
+### Using Docker Compose (Recommended)
+
+To build and run the unified container:
+```bash
+docker compose up --build -d
+```
+- **Application URL**: `http://localhost:8000`
+- **API Health**: `http://localhost:8000/api/health`
+- **API Docs**: `http://localhost:8000/docs`
+
+To stop the container:
+```bash
+docker compose down
+```
+
+### Using Docker Directly
+
+1. **Build the container image**:
+```bash
+docker build -t stonks-app .
+```
+
+2. **Run the container**:
+```bash
+docker run -d -p 8000:8000 --name stonks stonks-app
+```
+
+3. **Cloud Deployments (Cloud Run, ECS, Fly.io, K8s)**:
+The container automatically binds to the `$PORT` environment variable (defaults to `8000`) and runs as an unprivileged user (`appuser`, UID `10001`):
+```bash
+docker run -d -e PORT=8080 -p 8080:8080 stonks-app
+```
