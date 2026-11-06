@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Local cache & databases
+*.sqlite3
+.cache/
+.DS_Store
+
+# Environment
+.env
+.env.local

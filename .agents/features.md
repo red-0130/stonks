@@ -1,0 +1,24 @@
+# Features
+
+- users can search for a stock using its ticker symbol
+- see latest price of ticker
+- see basic information about the stock(e.g. market cap, outstanding shares, divident yield)
+- see historical earnings and estimates
+- stock rating based on the following:
+  - P/E Ratio (must be less than 20)
+  - ROIC (must be above 15%)
+  - Debt/Equity Ratio (must be less than 1)
+  - EPS CAGR (must be above 10%)
+  - ROE (must be greater than 15%)
+  - EBIT Margin (must be greater than 10%)
+  - Gross Margin (must be greater than 40%)
+- market sentiment summary
+- technical analysis
+- a price forecast with graph
+- an interactable price map where users can select the time frame (eg. 1W, 1D, 4H, 1H)
+- a list of trading strategies (more strategies will be added later)
+  - each strategy can be backtested on demand and will show success rate and number of successfull trades against the number of trades tested
+  - when backtested, will show a suitable setup
+    - entry price
+    - stop-loss price
+    - take-profit price
