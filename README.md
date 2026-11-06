@@ -108,3 +108,19 @@ The container automatically binds to the `$PORT` environment variable (defaults 
 ```bash
 docker run -d -e PORT=8080 -p 8080:8080 stonks-app
 ```
+
+---
+
+## 📦 GitHub Container Registry (GHCR)
+
+The repository includes a GitHub Actions CI/CD workflow ([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)) that automatically builds and publishes the production image to **ghcr.io** on every push to the `main` branch.
+
+### Pulling and Running the Pre-Built Image
+
+```bash
+# Pull the latest image from GHCR
+docker pull ghcr.io/red-0130/stonks:latest
+
+# Run the container
+docker run -d -p 8000:8000 --name stonks ghcr.io/red-0130/stonks:latest
+```
