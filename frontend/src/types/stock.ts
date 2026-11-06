@@ -147,14 +147,20 @@ export interface ForecastData {
 }
 
 export interface TradeSetup {
-  entry_price: number;
-  stop_loss_price: number;
-  take_profit_price: number;
+  entry_price: number | null;
+  stop_loss_price: number | null;
+  take_profit_price: number | null;
   risk_reward_ratio: string;
   potential_gain_pct: number;
   potential_risk_pct: number;
   condition: string;
   rationale: string;
+  no_trade?: boolean;
+  timeframe_status?: {
+    weekly: string;
+    daily: string;
+    execution_4h: string;
+  };
 }
 
 export interface BacktestTrade {
@@ -179,7 +185,7 @@ export interface BacktestResult {
   success_rate: number;
   profit_factor: number;
   total_return_percent: number;
-  setup: TradeSetup;
+  setup: TradeSetup | null;
   recent_trades: BacktestTrade[];
 }
 

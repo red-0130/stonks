@@ -1,6 +1,6 @@
 import React from 'react';
 import { BacktestResult } from '../types/stock';
-import { Play, CheckCircle, Crosshair, Target, Shield, Percent, History, Layers, MapPin, Compass } from 'lucide-react';
+import { Play, CheckCircle, Crosshair, Target, Shield, Percent, History, Layers, MapPin, Compass, TrendingUp, Clock, AlertTriangle } from 'lucide-react';
 
 interface BacktestStudioProps {
   strategies: { id: string; name: string; description: string }[];
@@ -19,6 +19,13 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
   onSetStrategy,
   isLoading,
 }) => {
+  const isNoTrade = Boolean(
+    (selectedStrategy === 'swing_structure' || backtestResult?.strategy === 'swing_structure') &&
+    (backtestResult?.setup?.no_trade ||
+      backtestResult?.setup?.condition?.toUpperCase().includes('NO TRADE') ||
+      !backtestResult?.setup?.entry_price)
+  );
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-6">
       {/* Header */}
@@ -35,11 +42,12 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
 
         <button
           onClick={onSetStrategy}
-          disabled={isLoading}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold shadow-lg transition"
+          disabled={isLoading || isNoTrade}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600 text-white rounded-lg text-sm font-bold shadow-lg transition"
+          title={isNoTrade ? 'No trade setup available in current market regime' : 'Apply trade setup to chart'}
         >
           <MapPin className={`w-4 h-4 ${isLoading ? 'animate-pulse' : ''}`} />
-          <span>{isLoading ? 'Setting Strategy...' : 'Set Strategy'}</span>
+          <span>{isLoading ? 'Setting Strategy...' : isNoTrade ? 'No Trade Available' : 'Set Strategy'}</span>
         </button>
       </div>
 
@@ -120,66 +128,163 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
             </div>
           </div>
 
-          {/* Actionable Trade Setup (Lines 21-24 of features.md) */}
-          <div className="bg-gradient-to-r from-emerald-950/30 via-slate-950 to-slate-950 border border-emerald-500/40 rounded-xl p-5 shadow-lg">
-            <div className="flex items-center gap-2 mb-3">
-              <Target className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-base font-bold text-white tracking-tight">
-                {backtestResult.strategy_name} — Trade Setup
-              </h3>
-              <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold ml-auto">
-                R:R {backtestResult.setup.risk_reward_ratio}
-              </span>
+          {/* Actionable Trade Setup or No-Trade Regime Notification */}
+          {isNoTrade ? (
+            <div className="bg-gradient-to-r from-amber-950/20 via-slate-950 to-slate-950 border border-amber-500/30 rounded-xl p-5 shadow-lg space-y-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white tracking-tight">
+                  {backtestResult.strategy_name} — Market Regime Filter
+                </h3>
+                <span className="text-xs px-2.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold ml-auto border border-amber-500/30">
+                  NO TRADE AVAILABLE
+                </span>
+              </div>
+
+              {/* Strategy Condition Indicator */}
+              {backtestResult.setup?.condition && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/90 rounded-lg border border-slate-800">
+                  <Compass className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="text-xs text-slate-300">
+                    <strong className="text-amber-300">Regime Status:</strong>{' '}
+                    {backtestResult.setup.condition}
+                  </span>
+                </div>
+              )}
+
+              {/* Multi-Timeframe Structure Status Badges */}
+              {backtestResult.setup?.timeframe_status && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      1W Trend Bias
+                    </span>
+                    <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                      {backtestResult.setup.timeframe_status.weekly}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      1D Structure
+                    </span>
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                      {backtestResult.setup.timeframe_status.daily}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      4H Confirmation
+                    </span>
+                    <span className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                      {backtestResult.setup.timeframe_status.execution_4h}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {backtestResult.setup?.rationale && (
+                <p className="text-xs text-slate-400 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                  💡 {backtestResult.setup.rationale}
+                </p>
+              )}
             </div>
-
-            {/* Strategy Condition Indicator */}
-            {backtestResult.setup.condition && (
-              <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-slate-900/90 rounded-lg border border-slate-800">
-                <Compass className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span className="text-xs text-slate-300">
-                  <strong className="text-emerald-300">Market Condition:</strong>{' '}
-                  {backtestResult.setup.condition}
-                </span>
-              </div>
-            )}
-
-            <p className="text-xs text-slate-300 mb-4 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
-              💡 {backtestResult.setup.rationale}
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
-              {/* Entry Price */}
-              <div className="p-3.5 bg-blue-950/20 border border-blue-500/30 rounded-lg">
-                <span className="text-xs text-blue-300 font-semibold block mb-1">Entry Price</span>
-                <span className="text-xl font-extrabold text-blue-400 font-mono">
-                  ${backtestResult.setup.entry_price.toFixed(2)}
-                </span>
-                <span className="text-[10px] text-slate-400 block mt-1">Current Trigger Level</span>
-              </div>
-
-              {/* Stop Loss */}
-              <div className="p-3.5 bg-rose-950/20 border border-rose-500/30 rounded-lg">
-                <span className="text-xs text-rose-300 font-semibold block mb-1">Stop-Loss Price</span>
-                <span className="text-xl font-extrabold text-rose-400 font-mono">
-                  ${backtestResult.setup.stop_loss_price.toFixed(2)}
-                </span>
-                <span className="text-[10px] text-rose-400/80 block mt-1 font-mono">
-                  -{backtestResult.setup.potential_risk_pct}% Risk
+          ) : backtestResult.setup && backtestResult.setup.entry_price !== null ? (
+            <div className="bg-gradient-to-r from-emerald-950/30 via-slate-950 to-slate-950 border border-emerald-500/40 rounded-xl p-5 shadow-lg">
+              <div className="flex items-center gap-2 mb-3">
+                <Target className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white tracking-tight">
+                  {backtestResult.strategy_name} — Trade Setup
+                </h3>
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold ml-auto">
+                  R:R {backtestResult.setup.risk_reward_ratio}
                 </span>
               </div>
 
-              {/* Take Profit */}
-              <div className="p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-lg">
-                <span className="text-xs text-emerald-300 font-semibold block mb-1">Take-Profit Price</span>
-                <span className="text-xl font-extrabold text-emerald-400 font-mono">
-                  ${backtestResult.setup.take_profit_price.toFixed(2)}
-                </span>
-                <span className="text-[10px] text-emerald-400/80 block mt-1 font-mono">
-                  +{backtestResult.setup.potential_gain_pct}% Target
-                </span>
+              {/* Strategy Condition Indicator */}
+              {backtestResult.setup.condition && (
+                <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-slate-900/90 rounded-lg border border-slate-800">
+                  <Compass className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-xs text-slate-300">
+                    <strong className="text-emerald-300">Market Condition:</strong>{' '}
+                    {backtestResult.setup.condition}
+                  </span>
+                </div>
+              )}
+
+              {/* Multi-Timeframe Structure Status Badges */}
+              {backtestResult.setup.timeframe_status && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      1W Trend Bias
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                      {backtestResult.setup.timeframe_status.weekly}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      1D Zone / POI
+                    </span>
+                    <span className="text-xs font-semibold text-blue-400 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 shrink-0 text-blue-400" />
+                      {backtestResult.setup.timeframe_status.daily}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
+                      4H Confirmation
+                    </span>
+                    <span className="text-xs font-semibold text-purple-400 flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+                      {backtestResult.setup.timeframe_status.execution_4h}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-300 mb-4 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                💡 {backtestResult.setup.rationale}
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+                {/* Entry Price */}
+                <div className="p-3.5 bg-blue-950/20 border border-blue-500/30 rounded-lg">
+                  <span className="text-xs text-blue-300 font-semibold block mb-1">Entry Price</span>
+                  <span className="text-xl font-extrabold text-blue-400 font-mono">
+                    ${backtestResult.setup.entry_price.toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Current Trigger Level</span>
+                </div>
+
+                {/* Stop Loss */}
+                <div className="p-3.5 bg-rose-950/20 border border-rose-500/30 rounded-lg">
+                  <span className="text-xs text-rose-300 font-semibold block mb-1">Stop-Loss Price</span>
+                  <span className="text-xl font-extrabold text-rose-400 font-mono">
+                    ${backtestResult.setup.stop_loss_price?.toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-rose-400/80 block mt-1 font-mono">
+                    -{backtestResult.setup.potential_risk_pct}% Risk
+                  </span>
+                </div>
+
+                {/* Take Profit */}
+                <div className="p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-lg">
+                  <span className="text-xs text-emerald-300 font-semibold block mb-1">Take-Profit Price</span>
+                  <span className="text-xl font-extrabold text-emerald-400 font-mono">
+                    ${backtestResult.setup.take_profit_price?.toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-emerald-400/80 block mt-1 font-mono">
+                    +{backtestResult.setup.potential_gain_pct}% Target
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
 
           {/* Recent Backtest Trades Table */}
           {backtestResult.recent_trades && backtestResult.recent_trades.length > 0 && (

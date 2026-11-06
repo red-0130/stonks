@@ -41,6 +41,11 @@ import {
 
 const STRATEGIES = [
   {
+    id: 'swing_structure',
+    name: 'Multi-Timeframe Swing Structure',
+    description: 'Top-down trend analysis (1W trend -> 1D POI / demand zones -> 4H confirmation) aiming for minimum 3:1 Risk/Reward.',
+  },
+  {
     id: 'smc_fvg_ob',
     name: 'Smart Money Concepts (SMC)',
     description: 'Fair Value Gap (FVG) liquidity imbalances & institutional Order Block demand retests.',
@@ -168,7 +173,7 @@ export const App: React.FC = () => {
 
   const handleSetStrategy = async () => {
     const data = await loadBacktest(ticker, selectedStrategy);
-    if (data?.setup) {
+    if (data?.setup && !data.setup.no_trade && data.setup.entry_price !== null) {
       setActiveChartSetup(data.setup);
       setActiveTab('chart');
     }

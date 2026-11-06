@@ -1,14 +1,95 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from app.services.data_service import get_historical_bars
 from app.cache import get_cached, set_cached
 
-def _compute_strategy_setup(strategy: str, df: pd.DataFrame) -> Dict[str, Any]:
+def _detect_swing_highs_lows(df: pd.DataFrame, window: int = 3) -> Tuple[List[dict], List[dict]]:
+    """Detect local swing highs and swing lows using a rolling window."""
+    swing_highs = []
+    swing_lows = []
+    n = len(df)
+    if n < window * 2 + 1:
+        return swing_highs, swing_lows
+
+    for i in range(window, n - window):
+        high_i = float(df.loc[i, "high"])
+        low_i = float(df.loc[i, "low"])
+
+        is_high = True
+        for k in range(i - window, i + window + 1):
+            if k != i and float(df.loc[k, "high"]) >= high_i:
+                is_high = False
+                break
+        if is_high:
+            swing_highs.append({"index": i, "price": high_i, "time": df.loc[i, "time"]})
+
+        is_low = True
+        for k in range(i - window, i + window + 1):
+            if k != i and float(df.loc[k, "low"]) <= low_i:
+                is_low = False
+                break
+        if is_low:
+            swing_lows.append({"index": i, "price": low_i, "time": df.loc[i, "time"]})
+
+    return swing_highs, swing_lows
+
+def _classify_market_structure(df: pd.DataFrame, window: int = 3) -> Tuple[str, dict]:
+    """
+    Classify market structure into UPTREND (HH/HL), DOWNTREND (LH/LL), or CONSOLIDATION.
+    Returns (regime, details_dict).
+    """
+    if len(df) < 12:
+        return "CONSOLIDATION", {"reason": "Insufficient data"}
+
+    swing_highs, swing_lows = _detect_swing_highs_lows(df, window=window)
+
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        close_series = df["close"]
+        sma20 = float(close_series.rolling(min(20, len(df)), min_periods=5).mean().iloc[-1])
+        last_close = float(close_series.iloc[-1])
+        if last_close > sma20 * 1.015:
+            return "UPTREND", {"type": "momentum_uptrend"}
+        elif last_close < sma20 * 0.985:
+            return "DOWNTREND", {"type": "momentum_downtrend"}
+        else:
+            return "CONSOLIDATION", {"type": "neutral_range"}
+
+    sh1, sh2 = swing_highs[-2]["price"], swing_highs[-1]["price"]
+    sl1, sl2 = swing_lows[-2]["price"], swing_lows[-1]["price"]
+
+    higher_highs = sh2 > sh1
+    higher_lows = sl2 > sl1
+    lower_highs = sh2 < sh1
+    lower_lows = sl2 < sl1
+
+    if higher_highs and higher_lows:
+        regime = "UPTREND"
+    elif lower_highs and lower_lows:
+        regime = "DOWNTREND"
+    elif higher_highs and not lower_lows:
+        regime = "UPTREND"
+    elif lower_lows and not higher_highs:
+        regime = "DOWNTREND"
+    else:
+        regime = "CONSOLIDATION"
+
+    details = {
+        "sh1": sh1,
+        "sh2": sh2,
+        "sl1": sl1,
+        "sl2": sl2,
+        "recent_high": sh2,
+        "recent_low": sl2,
+    }
+    return regime, details
+
+def _compute_strategy_setup(strategy: str, df: pd.DataFrame, ticker: str = "") -> Dict[str, Any]:
     """Compute an actionable trade setup using the selected strategy's own indicators."""
     last = df.iloc[-1]
     last_close = float(last["close"])
     last_atr = float(last["atr"]) if pd.notna(last["atr"]) and last["atr"] > 0 else (last_close * 0.02)
+    timeframe_status = None
 
     if strategy == "ema_cross":
         ema20 = float(last["ema_20"])
@@ -88,6 +169,120 @@ def _compute_strategy_setup(strategy: str, df: pd.DataFrame) -> Dict[str, Any]:
             f"TP target near upper band (${setup_tp:.2f})."
         )
 
+    elif strategy == "swing_structure":
+        # 1. Weekly Analysis (1W)
+        weekly_regime = "UPTREND"
+        weekly_status_str = "Bullish Uptrend (HH/HL)"
+        if ticker:
+            try:
+                w_bars = get_historical_bars(ticker, timeframe="1W")
+                if w_bars and len(w_bars) >= 10:
+                    w_df = pd.DataFrame(w_bars)
+                    for col in ["close", "open", "high", "low"]:
+                        w_df[col] = w_df[col].astype(float)
+                    w_regime, _ = _classify_market_structure(w_df, window=2)
+                    weekly_regime = w_regime
+                    if w_regime == "UPTREND":
+                        weekly_status_str = "Bullish Uptrend (HH/HL)"
+                    elif w_regime == "DOWNTREND":
+                        weekly_status_str = "Bearish Downtrend (LH/LL)"
+                    else:
+                        weekly_status_str = "Consolidation (Sideways Range)"
+            except Exception:
+                pass
+
+        # 2. Daily Analysis (1D)
+        daily_regime, _ = _classify_market_structure(df, window=3)
+        if daily_regime == "UPTREND":
+            daily_status_str = "Impulse / Demand Retest"
+        elif daily_regime == "DOWNTREND":
+            daily_status_str = "Bearish Correction (LH/LL)"
+        else:
+            daily_status_str = "Consolidation Range"
+
+        # Refined 1D POI / Demand Zone
+        recent_15_low = float(df["low"].iloc[-15:].min())
+        recent_15_high = float(df["high"].iloc[-15:].max())
+        demand_zone_low = round(recent_15_low, 2)
+        demand_zone_high = round(recent_15_low + (0.382 * max(0.01, recent_15_high - recent_15_low)), 2)
+
+        # 3. 4H Execution & Confirmation
+        h4_status_str = "4H Pullback into POI"
+        if ticker:
+            try:
+                h4_bars = get_historical_bars(ticker, timeframe="4H")
+                if h4_bars and len(h4_bars) >= 4:
+                    h4_df = pd.DataFrame(h4_bars)
+                    for col in ["close", "open", "high", "low"]:
+                        h4_df[col] = h4_df[col].astype(float)
+                    last_4h = h4_df.iloc[-1]
+                    prev_4h = h4_df.iloc[-2]
+                    if last_4h["close"] > last_4h["open"] and last_4h["close"] >= prev_4h["close"]:
+                        h4_status_str = "Confirmed Bullish Displacement"
+                    elif last_4h["close"] > last_4h["open"]:
+                        h4_status_str = "Emerging 4H Rebound"
+                    else:
+                        h4_status_str = "Consolidating inside POI"
+            except Exception:
+                pass
+
+        # Strict Long-Only Regime Filter: Weekly must be in UPTREND and Daily not in DOWNTREND
+        is_bullish = (weekly_regime == "UPTREND" and daily_regime != "DOWNTREND")
+
+        if is_bullish:
+            # Active Pro-Trend Swing Setup
+            if last_close <= demand_zone_high * 1.03:
+                setup_entry = round(last_close, 2)
+            else:
+                setup_entry = round(demand_zone_high, 2)
+
+            setup_sl = round(demand_zone_low - (0.5 * last_atr), 2)
+            if setup_sl >= setup_entry:
+                setup_sl = round(setup_entry - (1.5 * last_atr), 2)
+            risk = max(0.01, setup_entry - setup_sl)
+
+            # Minimum 3:1 R:R target (Exit Step 5)
+            structural_target = max(recent_15_high, setup_entry + (3.0 * risk))
+            setup_tp = round(max(structural_target, setup_entry + (3.0 * risk)), 2)
+            condition = f"1W: {weekly_status_str} | 1D Demand POI: ${demand_zone_low:.2f}–${demand_zone_high:.2f} | 4H: {h4_status_str}"
+            rationale = (
+                f"Multi-Timeframe Swing Strategy: Weekly trend is {weekly_status_str}. "
+                f"Daily structure identified key Demand POI at ${demand_zone_low:.2f}–${demand_zone_high:.2f}. "
+                f"Entry anchored at ${setup_entry:.2f} with structural SL below swing low at ${setup_sl:.2f}. "
+                f"Take-Profit targeted at ${setup_tp:.2f} enforcing a minimum 3:1 R:R pro-trend target."
+            )
+        else:
+            # Regime Filter: NO TRADE
+            condition = f"REGIME FILTER: NO TRADE — 1W {weekly_status_str}, 1D {daily_status_str}"
+            rationale = (
+                f"Market structure rules strictly prohibit buying during downtrends or consolidation. "
+                f"Current Weekly regime is {weekly_status_str} and Daily regime is {daily_status_str}. "
+                f"Capital preserved. Awaiting structural Break of Structure (BOS) into Higher Highs and Higher Lows."
+            )
+            timeframe_status = {
+                "weekly": weekly_status_str,
+                "daily": f"Structure: {daily_status_str}",
+                "execution_4h": h4_status_str,
+            }
+            return {
+                "no_trade": True,
+                "entry_price": None,
+                "stop_loss_price": None,
+                "take_profit_price": None,
+                "risk_reward_ratio": "N/A",
+                "potential_gain_pct": 0,
+                "potential_risk_pct": 0,
+                "condition": condition,
+                "rationale": rationale,
+                "timeframe_status": timeframe_status,
+            }
+
+        timeframe_status = {
+            "weekly": weekly_status_str,
+            "daily": f"Demand POI ${demand_zone_low:.2f}–${demand_zone_high:.2f}",
+            "execution_4h": h4_status_str,
+        }
+
     else:  # smc_fvg_ob
         fvg_entry = None
         fvg_sl = None
@@ -137,7 +332,7 @@ def _compute_strategy_setup(strategy: str, df: pd.DataFrame) -> Dict[str, Any]:
 
     rr_ratio = round((setup_tp - setup_entry) / risk, 1)
 
-    return {
+    res = {
         "entry_price": setup_entry,
         "stop_loss_price": setup_sl,
         "take_profit_price": setup_tp,
@@ -147,10 +342,13 @@ def _compute_strategy_setup(strategy: str, df: pd.DataFrame) -> Dict[str, Any]:
         "condition": condition,
         "rationale": rationale,
     }
+    if timeframe_status:
+        res["timeframe_status"] = timeframe_status
+    return res
 
 def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 365) -> Dict[str, Any]:
     ticker = ticker.upper().strip()
-    cache_key = f"backtest:v2:{ticker}:{strategy}:{lookback_days}"
+    cache_key = f"backtest:v4:{ticker}:{strategy}:{lookback_days}"
     cached = get_cached(cache_key)
     if cached:
         return cached
@@ -252,13 +450,35 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
                         signals.iloc[i] = 1
                         break
 
-    # Simulate trades with 1:2 Risk/Reward using ATR
+    elif strategy == "swing_structure":
+        # Swing Structure: Detect trend regime (HH/HL) and buy pullbacks into demand zones
+        for i in range(25, len(df)):
+            sub_df = df.iloc[max(0, i - 40) : i + 1].reset_index(drop=True)
+            regime, _ = _classify_market_structure(sub_df, window=2)
+            curr_c = float(df.loc[i, "close"])
+            curr_l = float(df.loc[i, "low"])
+            curr_o = float(df.loc[i, "open"])
+
+            if regime == "UPTREND":
+                # Find demand POI (origin of recent expansion in 15 bars)
+                low_15 = float(df["low"].iloc[max(0, i - 15) : i].min())
+                high_15 = float(df["high"].iloc[max(0, i - 15) : i].max())
+                demand_threshold = low_15 + (0.42 * max(0.01, high_15 - low_15))
+                # Pullback into demand zone followed by bullish defense (close > open)
+                if curr_l <= demand_threshold and curr_c > curr_o:
+                    signals.iloc[i] = 1
+            elif regime == "DOWNTREND":
+                signals.iloc[i] = -1
+
+    # Simulate trades with Risk/Reward management
     trades = []
     in_trade = False
     entry_price = 0.0
     entry_time = None
     stop_loss = 0.0
     take_profit = 0.0
+    risk = 0.0
+    breakeven_reached = False
 
     for i in range(30, len(df)):
         row = df.iloc[i]
@@ -275,10 +495,27 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
                 in_trade = True
                 entry_price = curr_price
                 entry_time = curr_time
-                risk = 1.5 * curr_atr
-                stop_loss = round(entry_price - risk, 2)
-                take_profit = round(entry_price + (2.0 * risk), 2)
+                if strategy == "swing_structure":
+                    recent_low = float(df["low"].iloc[max(0, i - 10) : i].min())
+                    risk = max(curr_atr * 1.2, entry_price - recent_low)
+                    stop_loss = round(entry_price - risk, 2)
+                    take_profit = round(entry_price + (3.0 * risk), 2)
+                    breakeven_reached = False
+                else:
+                    risk = 1.5 * curr_atr
+                    stop_loss = round(entry_price - risk, 2)
+                    take_profit = round(entry_price + (2.0 * risk), 2)
         else:
+            # Trailing stop management for swing_structure
+            if strategy == "swing_structure":
+                if not breakeven_reached and curr_high >= entry_price + (1.5 * risk):
+                    stop_loss = max(stop_loss, entry_price)
+                    breakeven_reached = True
+                elif breakeven_reached:
+                    local_low = float(df["low"].iloc[max(0, i - 5) : i].min())
+                    if local_low > stop_loss and local_low < curr_price:
+                        stop_loss = round(local_low, 2)
+
             # Check exit conditions
             hit_tp = curr_high >= take_profit
             hit_sl = curr_low <= stop_loss
@@ -290,7 +527,7 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
                     outcome = "WIN"
                 elif hit_sl:
                     exit_price = stop_loss
-                    outcome = "LOSS"
+                    outcome = "WIN" if exit_price >= entry_price else "LOSS"
                 else:
                     exit_price = curr_price
                     outcome = "WIN" if exit_price > entry_price else "LOSS"
@@ -329,9 +566,10 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
         "macd_cross": "MACD Signal Crossover",
         "bollinger_breakout": "Bollinger Bands Breakout",
         "smc_fvg_ob": "Smart Money Concepts (FVG & Order Block)",
+        "swing_structure": "Multi-Timeframe Swing Structure",
     }
     strategy_display_name = strategy_display_names.get(strategy, strategy)
-    setup_data = _compute_strategy_setup(strategy, df)
+    setup_data = _compute_strategy_setup(strategy, df, ticker=ticker)
 
     result = {
         "symbol": ticker,

@@ -22,3 +22,7 @@
     - entry price
     - stop-loss price
     - take-profit price
+
+## Additional strategies
+
+- @strategies/*-strategy.md

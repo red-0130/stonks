@@ -191,7 +191,14 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     priceLineRefs.current = [];
 
     // Draw active setup price lines
-    if (activeSetup && showSetupLines) {
+    if (
+      activeSetup &&
+      showSetupLines &&
+      !activeSetup.no_trade &&
+      activeSetup.entry_price !== null &&
+      activeSetup.take_profit_price !== null &&
+      activeSetup.stop_loss_price !== null
+    ) {
       try {
         const entryLine = candleSeriesRef.current.createPriceLine({
           price: activeSetup.entry_price,

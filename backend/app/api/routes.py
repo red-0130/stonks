@@ -62,7 +62,7 @@ def get_forecast(ticker: str, days: Optional[int] = Query(365)):
 @router.get("/stock/{ticker}/backtest")
 def get_backtest(
     ticker: str,
-    strategy: str = Query("ema_cross", pattern="^(ema_cross|rsi_reversal|macd_cross|bollinger_breakout|smc_fvg_ob)$"),
+    strategy: str = Query("ema_cross", pattern="^(ema_cross|rsi_reversal|macd_cross|bollinger_breakout|smc_fvg_ob|swing_structure)$"),
     lookback_days: int = Query(365, ge=60, le=1825)
 ):
     try:
