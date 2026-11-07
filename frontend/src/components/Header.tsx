@@ -8,7 +8,7 @@ interface HeaderProps {
   onRefresh: () => void;
 }
 
-const POPULAR_TICKERS = ['AAPL', 'NVDA', 'MSFT', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY'];
+const POPULAR_TICKERS = ['AAPL', 'NVDA', 'MSFT', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'NVTS', 'PATH'];
 
 export const Header: React.FC<HeaderProps> = ({
   currentTicker,
