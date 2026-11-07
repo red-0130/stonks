@@ -1,6 +1,7 @@
 import React from 'react';
 import { BacktestResult } from '../types/stock';
-import { Play, CheckCircle, Crosshair, Target, Shield, Percent, History, Layers, MapPin, Compass, TrendingUp, Clock, AlertTriangle } from 'lucide-react';
+import { Play, CheckCircle, Crosshair, Target, Shield, Percent, History, Layers, MapPin, Compass, TrendingUp, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { BacktestResultsSkeleton } from './skeletons';
 
 interface BacktestStudioProps {
   strategies: { id: string; name: string; description: string }[];
@@ -62,7 +63,7 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
           <MapPin className={`w-4 h-4 ${isLoading ? 'animate-pulse' : ''}`} />
           <span>
             {isLoading
-              ? 'Setting Strategy...'
+              ? 'Calculating Strategy...'
               : isNoTrade
               ? hasLiquidity
                 ? 'Set Strategy (Mark Liquidity)'
@@ -84,17 +85,24 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
               <button
                 key={strat.id}
                 onClick={() => onSelectStrategy(strat.id)}
+                disabled={isLoading}
                 className={`p-3.5 rounded-lg border text-left transition-all ${
                   isSelected
                     ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
                     : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-950'
-                }`}
+                } ${isLoading ? 'cursor-not-allowed opacity-90' : ''}`}
               >
                 <div className="flex items-center justify-between">
                   <span className={`text-sm font-bold ${isSelected ? 'text-emerald-300' : 'text-slate-200'}`}>
                     {strat.name}
                   </span>
-                  {isSelected && <span className="w-2 h-2 rounded-full bg-emerald-400"></span>}
+                  {isSelected && (
+                    isLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    )
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{strat.description}</p>
               </button>
@@ -104,8 +112,15 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
       </div>
 
       {/* Backtest Results Area */}
-      {backtestResult && (
-        <div className="space-y-6">
+      {backtestResult ? (
+        <div className="space-y-6 relative">
+          {/* Recalculating Overlay */}
+          {isLoading && (
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-[2px] z-20 rounded-xl flex flex-col items-center justify-center p-6">
+              <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-2" />
+              <span className="text-xs font-mono text-slate-300">Recalculating quantitative backtest model...</span>
+            </div>
+          )}
           {/* Performance Stats Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
@@ -434,6 +449,12 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
               </div>
             </div>
           )}
+        </div>
+      ) : isLoading ? (
+        <BacktestResultsSkeleton />
+      ) : (
+        <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl text-slate-400 text-xs">
+          No backtest results available for this strategy.
         </div>
       )}
     </div>

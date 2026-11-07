@@ -9,6 +9,14 @@ import { BacktestStudio } from './components/BacktestStudio';
 import { SentimentSection } from './components/SentimentSection';
 import { EarningsSection } from './components/EarningsSection';
 import {
+  TickerSummarySkeleton,
+  StockRatingSkeleton,
+  TechnicalSummarySkeleton,
+  ForecastSkeleton,
+  SentimentSkeleton,
+  EarningsSkeleton,
+} from './components/skeletons';
+import {
   fetchStockInfo,
   fetchChartBars,
   fetchStockRating,
@@ -108,7 +116,12 @@ export const App: React.FC = () => {
     setIsLoadingMain(true);
     setErrorMsg(null);
     try {
-      // Parallel fetch for speed
+      // Fire chart, backtest, and forecast concurrently for speed
+      loadBars(symbol, timeframe);
+      loadBacktest(symbol, selectedStrategy);
+      loadForecastData(symbol, forecastDays);
+
+      // Parallel fetch for core metadata
       const [infoRes, ratingRes, techRes, sentRes, earnRes] = await Promise.all([
         fetchStockInfo(symbol),
         fetchStockRating(symbol),
@@ -122,15 +135,6 @@ export const App: React.FC = () => {
       setTechnicals(techRes);
       setSentiment(sentRes);
       setEarnings(earnRes);
-
-      // Load Chart bars for current timeframe
-      await loadBars(symbol, timeframe);
-
-      // Load Backtest with default strategy
-      await loadBacktest(symbol, selectedStrategy);
-
-      // Load Forecast
-      await loadForecastData(symbol, forecastDays);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || 'Error fetching stock data');
@@ -198,6 +202,15 @@ export const App: React.FC = () => {
     if (newTicker !== ticker) {
       setActiveChartSetup(null);
       setTicker(newTicker);
+      // Reset states so skeletons display immediately for new ticker
+      setStockInfo(null);
+      setChartBars([]);
+      setRating(null);
+      setTechnicals(null);
+      setForecast(null);
+      setBacktestResult(null);
+      setSentiment(null);
+      setEarnings(null);
     }
   };
 
@@ -236,7 +249,11 @@ export const App: React.FC = () => {
         )}
 
         {/* Company Overview & Ticker Summary */}
-        {stockInfo && <TickerSummary info={stockInfo} />}
+        {stockInfo ? (
+          <TickerSummary info={stockInfo} />
+        ) : isLoadingMain ? (
+          <TickerSummarySkeleton />
+        ) : null}
 
         {/* Navigation Tabs Bar */}
         <div className="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto text-xs sm:text-sm font-semibold">
@@ -262,11 +279,13 @@ export const App: React.FC = () => {
           >
             <Award className="w-4 h-4" />
             <span>7-Factor Rating</span>
-            {rating && (
+            {rating ? (
               <span className="px-1.5 py-0.2 bg-emerald-950 text-emerald-300 rounded text-[11px] font-mono">
                 {rating.grade} ({rating.score}/7)
               </span>
-            )}
+            ) : isLoadingMain ? (
+              <span className="inline-block w-12 h-4 bg-slate-800 rounded animate-pulse" />
+            ) : null}
           </button>
 
           <button
@@ -291,11 +310,13 @@ export const App: React.FC = () => {
           >
             <Crosshair className="w-4 h-4" />
             <span>Backtest Studio & Setup</span>
-            {backtestResult && (
+            {backtestResult ? (
               <span className="px-1.5 py-0.2 bg-slate-800 text-slate-300 rounded text-[11px] font-mono">
                 {backtestResult.success_rate}% Win
               </span>
-            )}
+            ) : isLoadingBacktest || isLoadingMain ? (
+              <span className="inline-block w-14 h-4 bg-slate-800 rounded animate-pulse" />
+            ) : null}
           </button>
 
           <button
@@ -340,31 +361,53 @@ export const App: React.FC = () => {
 
               {/* Quick glance at 7-factor and technical gauge */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {rating && <StockRatingCard rating={rating} />}
-                {technicals && <TechnicalSummary technicals={technicals} />}
+                {rating ? (
+                  <StockRatingCard rating={rating} />
+                ) : isLoadingMain ? (
+                  <StockRatingSkeleton />
+                ) : null}
+                {technicals ? (
+                  <TechnicalSummary technicals={technicals} />
+                ) : isLoadingMain ? (
+                  <TechnicalSummarySkeleton />
+                ) : null}
               </div>
             </div>
           )}
 
           {/* TAB 2: 7-FACTOR RATING */}
-          {activeTab === 'rating' && rating && (
+          {activeTab === 'rating' && (
             <div className="space-y-6">
-              <StockRatingCard rating={rating} />
+              {rating ? (
+                <StockRatingCard rating={rating} />
+              ) : isLoadingMain ? (
+                <StockRatingSkeleton />
+              ) : (
+                <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl text-slate-400 text-xs">
+                  Rating data is unavailable for {ticker}.
+                </div>
+              )}
             </div>
           )}
 
           {/* TAB 3: FORECAST & TECHNICALS */}
           {activeTab === 'forecast' && (
             <div className="space-y-6">
-              {forecast && (
+              {forecast ? (
                 <ForecastChart
                   forecastData={forecast}
                   daysAhead={forecastDays}
                   onChangeDaysAhead={handleChangeDaysAhead}
                   isLoading={isLoadingForecast}
                 />
+              ) : (
+                <ForecastSkeleton />
               )}
-              {technicals && <TechnicalSummary technicals={technicals} />}
+              {technicals ? (
+                <TechnicalSummary technicals={technicals} />
+              ) : isLoadingMain ? (
+                <TechnicalSummarySkeleton />
+              ) : null}
             </div>
           )}
 
@@ -383,16 +426,24 @@ export const App: React.FC = () => {
           )}
 
           {/* TAB 5: SENTIMENT & NEWS */}
-          {activeTab === 'sentiment' && sentiment && (
+          {activeTab === 'sentiment' && (
             <div className="space-y-6">
-              <SentimentSection sentiment={sentiment} />
+              {sentiment ? (
+                <SentimentSection sentiment={sentiment} />
+              ) : (
+                <SentimentSkeleton />
+              )}
             </div>
           )}
 
           {/* TAB 6: HISTORICAL EARNINGS */}
-          {activeTab === 'earnings' && earnings && (
+          {activeTab === 'earnings' && (
             <div className="space-y-6">
-              <EarningsSection earnings={earnings} />
+              {earnings ? (
+                <EarningsSection earnings={earnings} />
+              ) : (
+                <EarningsSkeleton />
+              )}
             </div>
           )}
         </div>
