@@ -46,6 +46,12 @@ const STRATEGIES = [
     description: 'Top-down trend analysis (1W trend -> 1D POI / demand zones -> 4H confirmation) aiming for minimum 3:1 Risk/Reward.',
   },
   {
+    id: 'liquidity_sweep',
+    name: 'Liquidity Sweep (EQL/EQH Stop Hunt)',
+    description:
+      'Institutional stop-hunt framework: maps equal-highs/lows liquidity pools, confirms a sweep wick + LTF Market Structure Shift (BOS), then enters at the Demand/Supply POI. Targets 3:1–5:1 R:R.',
+  },
+  {
     id: 'smc_fvg_ob',
     name: 'Smart Money Concepts (SMC)',
     description: 'Fair Value Gap (FVG) liquidity imbalances & institutional Order Block demand retests.',
@@ -173,9 +179,14 @@ export const App: React.FC = () => {
 
   const handleSetStrategy = async () => {
     const data = await loadBacktest(ticker, selectedStrategy);
-    if (data?.setup && !data.setup.no_trade && data.setup.entry_price !== null) {
-      setActiveChartSetup(data.setup);
-      setActiveTab('chart');
+    if (data?.setup) {
+      if (!data.setup.no_trade && data.setup.entry_price !== null) {
+        setActiveChartSetup(data.setup);
+        setActiveTab('chart');
+      } else if (data.setup.liquidity_price) {
+        setActiveChartSetup(data.setup);
+        setActiveTab('chart');
+      }
     }
   };
 
@@ -323,6 +334,7 @@ export const App: React.FC = () => {
                 currentTimeframe={timeframe}
                 onSelectTimeframe={handleSelectTimeframe}
                 activeSetup={activeChartSetup}
+                onClearSetup={() => setActiveChartSetup(null)}
                 isLoading={isLoadingChart}
               />
 

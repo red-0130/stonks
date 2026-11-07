@@ -156,6 +156,11 @@ export interface TradeSetup {
   condition: string;
   rationale: string;
   no_trade?: boolean;
+  liquidity_price?: number | null;
+  liquidity_price_low?: number | null;
+  liquidity_price_high?: number | null;
+  liquidity_type?: string | null;
+  liquidity_status?: string | null;
   timeframe_status?: {
     weekly: string;
     daily: string;

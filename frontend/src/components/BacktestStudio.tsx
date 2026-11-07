@@ -20,11 +20,12 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
   isLoading,
 }) => {
   const isNoTrade = Boolean(
-    (selectedStrategy === 'swing_structure' || backtestResult?.strategy === 'swing_structure') &&
-    (backtestResult?.setup?.no_trade ||
-      backtestResult?.setup?.condition?.toUpperCase().includes('NO TRADE') ||
-      !backtestResult?.setup?.entry_price)
+    backtestResult?.setup?.no_trade ||
+    backtestResult?.setup?.condition?.toUpperCase().includes('NO TRADE') ||
+    !backtestResult?.setup?.entry_price
   );
+  const hasLiquidity = Boolean(backtestResult?.setup?.liquidity_price);
+  const canSetStrategy = !isLoading && (!isNoTrade || hasLiquidity);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-6">
@@ -42,12 +43,32 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
 
         <button
           onClick={onSetStrategy}
-          disabled={isLoading || isNoTrade}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600 text-white rounded-lg text-sm font-bold shadow-lg transition"
-          title={isNoTrade ? 'No trade setup available in current market regime' : 'Apply trade setup to chart'}
+          disabled={!canSetStrategy}
+          className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-bold shadow-lg transition ${
+            canSetStrategy
+              ? isNoTrade && hasLiquidity
+                ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20'
+                : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'
+              : 'bg-emerald-600 opacity-40 cursor-not-allowed'
+          }`}
+          title={
+            isNoTrade
+              ? hasLiquidity
+                ? 'Mark liquidity to be swept on chart'
+                : 'No trade setup available in current market regime'
+              : 'Apply trade setup to chart'
+          }
         >
           <MapPin className={`w-4 h-4 ${isLoading ? 'animate-pulse' : ''}`} />
-          <span>{isLoading ? 'Setting Strategy...' : isNoTrade ? 'No Trade Available' : 'Set Strategy'}</span>
+          <span>
+            {isLoading
+              ? 'Setting Strategy...'
+              : isNoTrade
+              ? hasLiquidity
+                ? 'Set Strategy (Mark Liquidity)'
+                : 'No Trade Available'
+              : 'Set Strategy'}
+          </span>
         </button>
       </div>
 
@@ -185,6 +206,63 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
                 </div>
               )}
 
+              {/* Liquidity to be Swept Card */}
+              {backtestResult.setup?.liquidity_price && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="bg-slate-900/90 border border-amber-500/40 p-3.5 rounded-lg flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block mb-0.5">
+                        Liquidity Pool Area to Sweep
+                      </span>
+                      <span className="text-xs font-semibold text-slate-200">
+                        {backtestResult.setup.liquidity_type || 'Equal Lows Pool'}
+                      </span>
+                      {backtestResult.setup.liquidity_price_low && backtestResult.setup.liquidity_price_high && (
+                        <span className="text-[10px] text-slate-400 block mt-1">
+                          Spread: ${(backtestResult.setup.liquidity_price_high - backtestResult.setup.liquidity_price_low).toFixed(2)} (
+                          {(
+                            ((backtestResult.setup.liquidity_price_high - backtestResult.setup.liquidity_price_low) /
+                              backtestResult.setup.liquidity_price_low) *
+                            100
+                          ).toFixed(2)}
+                          %)
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      {backtestResult.setup.liquidity_price_low && backtestResult.setup.liquidity_price_high ? (
+                        <div>
+                          <span className="text-lg sm:text-xl font-mono font-extrabold text-amber-300 block">
+                            ${backtestResult.setup.liquidity_price_low.toFixed(2)} – ${backtestResult.setup.liquidity_price_high.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            Mid: ${backtestResult.setup.liquidity_price.toFixed(2)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-2xl font-mono font-extrabold text-amber-300">
+                          ${backtestResult.setup.liquidity_price.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-lg flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">
+                        Execution Prerequisite
+                      </span>
+                      <span className="text-xs text-slate-300">
+                        Sweep penetration into area + LTF BOS
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                      {backtestResult.setup.liquidity_status || 'AWAITING SWEEP'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {backtestResult.setup?.rationale && (
                 <p className="text-xs text-slate-400 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
                   💡 {backtestResult.setup.rationale}
@@ -244,6 +322,22 @@ export const BacktestStudio: React.FC<BacktestStudioProps> = ({
                       {backtestResult.setup.timeframe_status.execution_4h}
                     </span>
                   </div>
+                </div>
+              )}
+
+              {backtestResult.setup.liquidity_price && (
+                <div className="flex items-center justify-between mb-3 px-3.5 py-2.5 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="text-xs text-amber-200">
+                      <strong>Swept Liquidity Pool Area:</strong> {backtestResult.setup.liquidity_type || 'Equal Lows Pool'}
+                    </span>
+                  </div>
+                  <span className="text-sm sm:text-base font-mono font-bold text-amber-300">
+                    {backtestResult.setup.liquidity_price_low && backtestResult.setup.liquidity_price_high
+                      ? `$${backtestResult.setup.liquidity_price_low.toFixed(2)} – $${backtestResult.setup.liquidity_price_high.toFixed(2)}`
+                      : `$${backtestResult.setup.liquidity_price.toFixed(2)}`}
+                  </span>
                 </div>
               )}
 

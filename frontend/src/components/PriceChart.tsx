@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, LineData, HistogramData, Time } from 'lightweight-charts';
 import { ChartBar, TradeSetup } from '../types/stock';
-import { Maximize2, BarChart, TrendingUp, Layers } from 'lucide-react';
+import { Maximize2, BarChart, TrendingUp, Layers, MapPin, Target } from 'lucide-react';
 
 interface PriceChartProps {
   bars: ChartBar[];
@@ -9,6 +9,7 @@ interface PriceChartProps {
   currentTimeframe: string;
   onSelectTimeframe: (tf: string) => void;
   activeSetup?: TradeSetup | null;
+  onClearSetup?: () => void;
   isLoading: boolean;
 }
 
@@ -20,6 +21,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
   currentTimeframe,
   onSelectTimeframe,
   activeSetup,
+  onClearSetup,
   isLoading,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -32,6 +34,12 @@ export const PriceChart: React.FC<PriceChartProps> = ({
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
   const [showVolume, setShowVolume] = useState<boolean>(true);
   const [showSetupLines, setShowSetupLines] = useState<boolean>(true);
+  const [liquidityZone, setLiquidityZone] = useState<{
+    top: number;
+    height: number;
+    low: number;
+    high: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -176,7 +184,62 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current.timeScale().fitContent();
   }, [bars, chartType, showVolume]);
 
-  // Update Setup Price Lines (Entry, Stop Loss, Take Profit)
+  // Helper to calculate pixel coordinates for the Liquidity Pool Area Marker
+  const updateLiquidityZone = () => {
+    if (!candleSeriesRef.current || !activeSetup || !showSetupLines) {
+      setLiquidityZone(null);
+      return;
+    }
+
+    const low = activeSetup.liquidity_price_low ?? activeSetup.liquidity_price;
+    const high = activeSetup.liquidity_price_high ?? activeSetup.liquidity_price;
+
+    if (low === null || low === undefined || high === null || high === undefined) {
+      setLiquidityZone(null);
+      return;
+    }
+
+    const yHigh = candleSeriesRef.current.priceToCoordinate(high);
+    const yLow = candleSeriesRef.current.priceToCoordinate(low);
+
+    if (yHigh === null || yLow === null) {
+      setLiquidityZone(null);
+      return;
+    }
+
+    const top = Math.min(yHigh, yLow);
+    const height = Math.max(10, Math.abs(yLow - yHigh));
+
+    setLiquidityZone({ top, height, low, high });
+  };
+
+  // Sync Liquidity Area Marker pixel position whenever chart scales, scrolls, or resizes
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    const timer = setTimeout(() => {
+      updateLiquidityZone();
+    }, 50);
+
+    const handleRangeChange = () => {
+      updateLiquidityZone();
+    };
+
+    chartRef.current.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    chartRef.current.timeScale().subscribeVisibleTimeRangeChange(handleRangeChange);
+
+    return () => {
+      clearTimeout(timer);
+      try {
+        chartRef.current?.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+        chartRef.current?.timeScale().unsubscribeVisibleTimeRangeChange(handleRangeChange);
+      } catch (e) {
+        // Safe fallback
+      }
+    };
+  }, [activeSetup, showSetupLines, bars, chartType]);
+
+  // Update Setup Price Lines (Entry, Stop Loss, Take Profit, Liquidity Boundaries)
   useEffect(() => {
     if (!candleSeriesRef.current) return;
 
@@ -191,43 +254,88 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     priceLineRefs.current = [];
 
     // Draw active setup price lines
-    if (
-      activeSetup &&
-      showSetupLines &&
-      !activeSetup.no_trade &&
-      activeSetup.entry_price !== null &&
-      activeSetup.take_profit_price !== null &&
-      activeSetup.stop_loss_price !== null
-    ) {
+    if (activeSetup && showSetupLines) {
       try {
-        const entryLine = candleSeriesRef.current.createPriceLine({
-          price: activeSetup.entry_price,
-          color: '#3b82f6',
-          lineWidth: 2,
-          lineStyle: 0, // Solid
-          axisLabelVisible: true,
-          title: `ENTRY: $${activeSetup.entry_price}`,
-        });
+        const lines: any[] = [];
 
-        const tpLine = candleSeriesRef.current.createPriceLine({
-          price: activeSetup.take_profit_price,
-          color: '#10b981',
-          lineWidth: 2,
-          lineStyle: 1, // Dotted
-          axisLabelVisible: true,
-          title: `TP (+${activeSetup.potential_gain_pct}%): $${activeSetup.take_profit_price}`,
-        });
+        // 1. Entry / Stop-Loss / Take-Profit lines for valid trade setup
+        if (
+          !activeSetup.no_trade &&
+          activeSetup.entry_price !== null &&
+          activeSetup.take_profit_price !== null &&
+          activeSetup.stop_loss_price !== null
+        ) {
+          const entryLine = candleSeriesRef.current.createPriceLine({
+            price: activeSetup.entry_price,
+            color: '#3b82f6',
+            lineWidth: 2,
+            lineStyle: 0, // Solid
+            axisLabelVisible: true,
+            title: `ENTRY: $${activeSetup.entry_price}`,
+          });
 
-        const slLine = candleSeriesRef.current.createPriceLine({
-          price: activeSetup.stop_loss_price,
-          color: '#ef4444',
-          lineWidth: 2,
-          lineStyle: 1, // Dotted
-          axisLabelVisible: true,
-          title: `SL (-${activeSetup.potential_risk_pct}%): $${activeSetup.stop_loss_price}`,
-        });
+          const tpLine = candleSeriesRef.current.createPriceLine({
+            price: activeSetup.take_profit_price,
+            color: '#10b981',
+            lineWidth: 2,
+            lineStyle: 1, // Dotted
+            axisLabelVisible: true,
+            title: `TP (+${activeSetup.potential_gain_pct}%): $${activeSetup.take_profit_price}`,
+          });
 
-        priceLineRefs.current = [entryLine, tpLine, slLine];
+          const slLine = candleSeriesRef.current.createPriceLine({
+            price: activeSetup.stop_loss_price,
+            color: '#ef4444',
+            lineWidth: 2,
+            lineStyle: 1, // Dotted
+            axisLabelVisible: true,
+            title: `SL (-${activeSetup.potential_risk_pct}%): $${activeSetup.stop_loss_price}`,
+          });
+
+          lines.push(entryLine, tpLine, slLine);
+        }
+
+        // 2. Liquidity Pool Boundary Price Lines on axis
+        const isAwaitingSweep = Boolean(activeSetup.no_trade);
+        const poolColor = isAwaitingSweep ? '#f59e0b' : '#a855f7';
+        const low = activeSetup.liquidity_price_low ?? activeSetup.liquidity_price;
+        const high = activeSetup.liquidity_price_high ?? activeSetup.liquidity_price;
+
+        if (low !== null && low !== undefined && high !== null && high !== undefined) {
+          if (Math.abs(high - low) > 0.05) {
+            // Two boundary lines marking the top and bottom of the liquidity pool
+            const highLine = candleSeriesRef.current.createPriceLine({
+              price: high,
+              color: poolColor,
+              lineWidth: 1,
+              lineStyle: 2, // Dashed
+              axisLabelVisible: true,
+              title: isAwaitingSweep ? `POOL HIGH: $${high.toFixed(2)}` : `SWEPT HIGH: $${high.toFixed(2)}`,
+            });
+            const lowLine = candleSeriesRef.current.createPriceLine({
+              price: low,
+              color: poolColor,
+              lineWidth: 1,
+              lineStyle: 2, // Dashed
+              axisLabelVisible: true,
+              title: isAwaitingSweep ? `POOL LOW: $${low.toFixed(2)}` : `SWEPT LOW: $${low.toFixed(2)}`,
+            });
+            lines.push(highLine, lowLine);
+          } else {
+            // Single line fallback if low and high are identical
+            const singleLine = candleSeriesRef.current.createPriceLine({
+              price: high,
+              color: poolColor,
+              lineWidth: 2,
+              lineStyle: 2,
+              axisLabelVisible: true,
+              title: isAwaitingSweep ? `POOL: $${high.toFixed(2)}` : `SWEPT: $${high.toFixed(2)}`,
+            });
+            lines.push(singleLine);
+          }
+        }
+
+        priceLineRefs.current = lines;
       } catch (e) {
         // Safe fallback
       }
@@ -292,23 +400,155 @@ export const PriceChart: React.FC<PriceChartProps> = ({
 
           {/* Setup Lines Toggle if setup exists */}
           {activeSetup && (
-            <button
-              onClick={() => setShowSetupLines(!showSetupLines)}
-              className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
-                showSetupLines
-                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                  : 'bg-transparent text-slate-500 border-slate-800 hover:text-slate-400'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              Setup Overlay
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setShowSetupLines(!showSetupLines)}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+                  showSetupLines
+                    ? activeSetup.no_trade
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                    : 'bg-transparent text-slate-500 border-slate-800 hover:text-slate-400'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    activeSetup.no_trade ? 'bg-amber-400' : 'bg-emerald-400'
+                  }`}
+                ></span>
+                {activeSetup.no_trade ? 'Liquidity Area' : 'Setup Overlay'}
+              </button>
+              {onClearSetup && (
+                <button
+                  onClick={onClearSetup}
+                  className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300 rounded border border-transparent hover:border-slate-800 transition"
+                  title="Remove strategy overlay from chart"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
+      {/* Active Setup / Liquidity Target Banner */}
+      {activeSetup && showSetupLines && (
+        <div
+          className={`px-4 py-2 border-b flex flex-wrap items-center justify-between text-xs gap-2 ${
+            activeSetup.no_trade
+              ? 'bg-amber-950/40 border-amber-500/30 text-amber-200'
+              : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {activeSetup.no_trade ? (
+              <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+            ) : (
+              <Target className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
+            <span>
+              {activeSetup.no_trade ? (
+                <>
+                  <strong className="text-amber-400 uppercase tracking-wide">
+                    Liquidity Pool to Sweep:
+                  </strong>{' '}
+                  {activeSetup.liquidity_type || 'Pool'}{' '}
+                  {activeSetup.liquidity_price_low && activeSetup.liquidity_price_high ? (
+                    <>
+                      area marked at{' '}
+                      <strong className="font-mono text-white text-sm">
+                        ${activeSetup.liquidity_price_low.toFixed(2)} – ${activeSetup.liquidity_price_high.toFixed(2)}
+                      </strong>{' '}
+                      <span className="text-amber-300/80 font-normal">
+                        (Mid: ${activeSetup.liquidity_price?.toFixed(2)}) — awaiting sweep + BOS
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      marked at{' '}
+                      <strong className="font-mono text-white text-sm">
+                        ${activeSetup.liquidity_price?.toFixed(2)}
+                      </strong>{' '}
+                      <span className="text-amber-300/80 font-normal">
+                        (No Trade yet — awaiting sweep + BOS)
+                      </span>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <strong className="text-emerald-400 uppercase tracking-wide">
+                    Active Setup:
+                  </strong>{' '}
+                  Entry{' '}
+                  <strong className="font-mono text-white">
+                    ${activeSetup.entry_price?.toFixed(2)}
+                  </strong>{' '}
+                  | SL{' '}
+                  <strong className="font-mono text-rose-300">
+                    ${activeSetup.stop_loss_price?.toFixed(2)}
+                  </strong>{' '}
+                  | TP{' '}
+                  <strong className="font-mono text-emerald-300">
+                    ${activeSetup.take_profit_price?.toFixed(2)}
+                  </strong>{' '}
+                  <span className="font-mono text-emerald-400 font-bold ml-1">
+                    (R:R {activeSetup.risk_reward_ratio})
+                  </span>
+                  {activeSetup.liquidity_price_low && activeSetup.liquidity_price_high ? (
+                    <span className="text-slate-300 ml-2">
+                      • Swept Area: ${activeSetup.liquidity_price_low.toFixed(2)}–${activeSetup.liquidity_price_high.toFixed(2)}
+                    </span>
+                  ) : activeSetup.liquidity_price ? (
+                    <span className="text-slate-300 ml-2">
+                      • Swept: ${activeSetup.liquidity_price.toFixed(2)}
+                    </span>
+                  ) : null}
+                </>
+              )}
+            </span>
+          </div>
+
+          {onClearSetup && (
+            <button
+              onClick={onClearSetup}
+              className="text-[11px] text-slate-400 hover:text-white underline transition"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Chart Canvas */}
-      <div className="relative w-full h-[480px]">
+      <div className="relative w-full h-[480px] overflow-hidden">
+        {/* Dynamic Liquidity Pool Area Marker */}
+        {liquidityZone && showSetupLines && (
+          <div
+            className="absolute pointer-events-none z-10 transition-all duration-75"
+            style={{
+              top: `${liquidityZone.top}px`,
+              height: `${liquidityZone.height}px`,
+              left: 0,
+              right: '65px',
+              backgroundColor: activeSetup?.no_trade
+                ? 'rgba(245, 158, 11, 0.16)'
+                : 'rgba(168, 85, 247, 0.16)',
+              borderTop: `1.5px dashed ${activeSetup?.no_trade ? '#f59e0b' : '#a855f7'}`,
+              borderBottom: `1.5px dashed ${activeSetup?.no_trade ? '#f59e0b' : '#a855f7'}`,
+            }}
+          >
+            <div className="absolute left-3 top-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-wider bg-slate-950/90 border border-amber-500/40 text-amber-300 shadow flex items-center gap-1.5 backdrop-blur-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+              <span>
+                {activeSetup?.no_trade ? 'LIQUIDITY POOL AREA' : 'SWEPT LIQUIDITY AREA'}: $
+                {liquidityZone.low.toFixed(2)} – ${liquidityZone.high.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        )}
+
         {isLoading && (
           <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-20 flex flex-col items-center justify-center">
             <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -340,15 +580,33 @@ export const PriceChart: React.FC<PriceChartProps> = ({
           </span>
           {activeSetup && showSetupLines && (
             <>
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-0.5 bg-blue-500"></span> Entry
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-0.5 bg-emerald-500"></span> Take Profit
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-0.5 bg-rose-500"></span> Stop Loss
-              </span>
+              {activeSetup.entry_price !== null && (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-0.5 bg-blue-500"></span> Entry
+                </span>
+              )}
+              {activeSetup.take_profit_price !== null && (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-0.5 bg-emerald-500"></span> Take Profit
+                </span>
+              )}
+              {activeSetup.stop_loss_price !== null && (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-0.5 bg-rose-500"></span> Stop Loss
+                </span>
+              )}
+              {activeSetup.liquidity_price && (
+                <span className="flex items-center gap-1">
+                  <span
+                    className={`w-3.5 h-2 rounded-sm border border-dashed ${
+                      activeSetup.no_trade
+                        ? 'bg-amber-500/30 border-amber-400'
+                        : 'bg-purple-500/30 border-purple-400'
+                    }`}
+                  ></span>{' '}
+                  {activeSetup.no_trade ? 'Liquidity Pool Area' : 'Swept Liquidity Area'}
+                </span>
+              )}
             </>
           )}
         </div>

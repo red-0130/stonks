@@ -84,6 +84,102 @@ def _classify_market_structure(df: pd.DataFrame, window: int = 3) -> Tuple[str, 
     }
     return regime, details
 
+def _detect_unswept_liquidity(df: pd.DataFrame, lookback: int = 60) -> Tuple[float, float, str]:
+    """
+    Identify the most prominent unswept liquidity pool on the chart that price is likely to target.
+    Checks for Equal Lows (sell-side liquidity) or Equal Highs (buy-side liquidity) or major swing extremes.
+    Returns (pool_low, pool_high, pool_type).
+    """
+    n = len(df)
+    start_idx = max(0, n - lookback)
+    sub = df.iloc[start_idx:].reset_index(drop=True)
+    last_close = float(sub["close"].iloc[-1])
+    last_atr = float(sub["atr"].iloc[-1]) if "atr" in sub.columns and pd.notna(sub["atr"].iloc[-1]) and sub["atr"].iloc[-1] > 0 else (last_close * 0.02)
+
+    swing_highs, swing_lows = _detect_swing_highs_lows(sub, window=2)
+
+    # 1. Look for Equal Lows (EQL) below last_close that haven't been swept
+    lows_below = [s for s in swing_lows if s["price"] < last_close]
+    tol = 0.0075  # 0.75% price tolerance for equal levels
+
+    best_eql = None
+    best_eql_cluster = None
+    best_eql_count = 0
+    for i in range(len(lows_below)):
+        p1 = lows_below[i]["price"]
+        cluster = [lows_below[i]]
+        for j in range(i + 1, len(lows_below)):
+            p2 = lows_below[j]["price"]
+            if abs(p2 - p1) / max(p1, 0.01) <= tol:
+                cluster.append(lows_below[j])
+        if len(cluster) >= 2 and len(cluster) > best_eql_count:
+            last_touch_idx = max(c["index"] for c in cluster)
+            cluster_min = min(c["price"] for c in cluster)
+            subsequent_lows = sub["low"].iloc[last_touch_idx + 1 :]
+            if len(subsequent_lows) == 0 or subsequent_lows.min() >= cluster_min * 0.998:
+                best_eql = round(float(cluster_min), 2)
+                best_eql_cluster = cluster
+                best_eql_count = len(cluster)
+
+    if best_eql is not None and best_eql_cluster is not None:
+        cluster_min = min(c["price"] for c in best_eql_cluster)
+        cluster_max = max(c["price"] for c in best_eql_cluster)
+        pool_high = round(float(cluster_max), 2)
+        pool_low = round(float(cluster_min) - (0.35 * last_atr), 2)
+        return pool_low, pool_high, f"Equal Lows (Sell-Side Liquidity Pool — {best_eql_count} touches)"
+
+    # 2. Look for Equal Highs (EQH) above last_close if seeking buy-side liquidity
+    highs_above = [s for s in swing_highs if s["price"] > last_close]
+    best_eqh = None
+    best_eqh_cluster = None
+    best_eqh_count = 0
+    for i in range(len(highs_above)):
+        p1 = highs_above[i]["price"]
+        cluster = [highs_above[i]]
+        for j in range(i + 1, len(highs_above)):
+            p2 = highs_above[j]["price"]
+            if abs(p2 - p1) / max(p1, 0.01) <= tol:
+                cluster.append(highs_above[j])
+        if len(cluster) >= 2 and len(cluster) > best_eqh_count:
+            last_touch_idx = max(c["index"] for c in cluster)
+            cluster_max = max(c["price"] for c in cluster)
+            subsequent_highs = sub["high"].iloc[last_touch_idx + 1 :]
+            if len(subsequent_highs) == 0 or subsequent_highs.max() <= cluster_max * 1.002:
+                best_eqh = round(float(cluster_max), 2)
+                best_eqh_cluster = cluster
+                best_eqh_count = len(cluster)
+
+    # 3. Prefer Sell-Side Liquidity (Equal Lows or Swing Low below current price) for bullish liquidity sweep setup
+    if lows_below:
+        lowest_swing = min(lows_below, key=lambda s: s["price"])
+        pool_high = round(float(lowest_swing["price"]), 2)
+        pool_low = round(float(lowest_swing["price"]) - (0.4 * last_atr), 2)
+        return pool_low, pool_high, "Major Swing Low (Sell-Side Liquidity Pool)"
+
+    if best_eqh is not None and best_eqh_cluster is not None:
+        cluster_min = min(c["price"] for c in best_eqh_cluster)
+        cluster_max = max(c["price"] for c in best_eqh_cluster)
+        pool_low = round(float(cluster_min), 2)
+        pool_high = round(float(cluster_max) + (0.35 * last_atr), 2)
+        return pool_low, pool_high, f"Equal Highs (Buy-Side Liquidity Pool — {best_eqh_count} touches)"
+
+    if highs_above:
+        highest_swing = max(highs_above, key=lambda s: s["price"])
+        pool_low = round(float(highest_swing["price"]), 2)
+        pool_high = round(float(highest_swing["price"]) + (0.4 * last_atr), 2)
+        return pool_low, pool_high, "Major Swing High (Buy-Side Liquidity Pool)"
+
+    lowest_recent = float(sub["low"].iloc[-min(20, len(sub)):].min())
+    if lowest_recent < last_close:
+        pool_high = round(lowest_recent, 2)
+        pool_low = round(lowest_recent - (0.4 * last_atr), 2)
+        return pool_low, pool_high, "Recent Low (Sell-Side Liquidity Pool)"
+
+    highest_recent = float(sub["high"].iloc[-min(20, len(sub)):].max())
+    pool_low = round(highest_recent, 2)
+    pool_high = round(highest_recent + (0.4 * last_atr), 2)
+    return pool_low, pool_high, "Recent High (Buy-Side Liquidity Pool)"
+
 def _compute_strategy_setup(strategy: str, df: pd.DataFrame, ticker: str = "") -> Dict[str, Any]:
     """Compute an actionable trade setup using the selected strategy's own indicators."""
     last = df.iloc[-1]
@@ -283,6 +379,132 @@ def _compute_strategy_setup(strategy: str, df: pd.DataFrame, ticker: str = "") -
             "execution_4h": h4_status_str,
         }
 
+    elif strategy == "liquidity_sweep":
+        # Scan last 60 bars for the most recent qualified Liquidity Sweep + BOS pattern
+        eq_window = 5
+        tol = 0.0025
+        setup_found = False
+        setup_data = None
+
+        for i in range(len(df) - 1, max(49, len(df) - 60), -1):
+            recent_lows = df["low"].iloc[max(0, i - eq_window) : i]
+            if len(recent_lows) < 3:
+                continue
+            low_min = float(recent_lows.min())
+            low_max = float(recent_lows.max())
+            has_eql = (low_max - low_min) / max(low_min, 0.01) < tol
+
+            if not has_eql:
+                continue
+
+            candle = df.iloc[i]
+            sweep_low = low_min
+            if not (float(candle["low"]) < sweep_low and float(candle["close"]) > sweep_low):
+                continue
+
+            swing_high_5 = float(df["high"].iloc[max(0, i - 5) : i].max())
+            bos_found = False
+            bos_bar = -1
+            for j in range(i + 1, min(i + 6, len(df))):
+                if float(df.iloc[j]["close"]) > swing_high_5:
+                    bos_found = True
+                    bos_bar = j
+                    break
+            if not bos_found:
+                continue
+
+            # Check if this setup is still active/qualified today (within 12 bars, SL not hit, TP not hit)
+            bars_since_bos = (len(df) - 1) - bos_bar
+            if bars_since_bos > 12:
+                # Setup is outdated / expired
+                continue
+
+            # Compute POI
+            impulse_base_low = float(df["low"].iloc[i : bos_bar + 1].min())
+            impulse_base_high = float(df["high"].iloc[i : bos_bar + 1].max())
+            setup_entry = round(impulse_base_low + 0.382 * max(0.01, impulse_base_high - impulse_base_low), 2)
+            sl_anchor = float(candle["low"])
+            setup_sl = round(sl_anchor - last_atr * 0.5, 2)
+            risk = max(0.01, setup_entry - setup_sl)
+            opp_high = float(df["high"].iloc[max(0, i - eq_window) : i].max())
+            setup_tp = round(max(opp_high, setup_entry + 3.0 * risk), 2)
+            swept_level = round(sweep_low, 2)
+
+            subsequent = df.iloc[bos_bar:]
+            lowest_since = float(subsequent["low"].min())
+            highest_since = float(subsequent["high"].max())
+
+            if lowest_since <= setup_sl or highest_since >= setup_tp:
+                # Already hit SL or TP -> no longer an active setup
+                continue
+
+            if setup_sl >= setup_entry:
+                setup_sl = round(setup_entry - last_atr, 2)
+            risk = max(0.01, setup_entry - setup_sl)
+            if setup_tp <= setup_entry:
+                setup_tp = round(setup_entry + (2.0 * risk), 2)
+            rr_ratio = round((setup_tp - setup_entry) / risk, 1)
+
+            condition = (
+                f"Equal Lows swept at ${swept_level:.2f} → BOS above ${swing_high_5:.2f} confirmed. "
+                f"Demand POI: ${impulse_base_low:.2f}–${impulse_base_high:.2f}."
+            )
+            rationale = (
+                f"Liquidity Sweep: Retail sell-stops below equal lows (${swept_level:.2f}) were swept. "
+                f"Lower-timeframe BOS above ${swing_high_5:.2f} confirms institutional reversal. "
+                f"Entry limit at demand POI (${setup_entry:.2f}), SL below sweep wick (${setup_sl:.2f}), "
+                f"TP at opposing liquidity pool (${setup_tp:.2f}) — min 3:1 R:R."
+            )
+
+            setup_data = {
+                "no_trade": False,
+                "entry_price": setup_entry,
+                "stop_loss_price": setup_sl,
+                "take_profit_price": setup_tp,
+                "risk_reward_ratio": f"1:{rr_ratio:.1f}",
+                "potential_gain_pct": round(((setup_tp - setup_entry) / setup_entry) * 100, 2),
+                "potential_risk_pct": round(((setup_entry - setup_sl) / setup_entry) * 100, 2),
+                "condition": condition,
+                "rationale": rationale,
+                "liquidity_price": swept_level,
+                "liquidity_price_low": round(float(candle["low"]), 2),
+                "liquidity_price_high": swept_level,
+                "liquidity_type": "Swept Equal Lows",
+                "liquidity_status": "Swept",
+            }
+            setup_found = True
+            break
+
+        if setup_found and setup_data:
+            return setup_data
+        else:
+            # If no qualified setup, do not use a fallback setup — indicate "No Trade" and show liquidity to be swept
+            pool_low, pool_high, unswept_type = _detect_unswept_liquidity(df)
+            unswept_mid = round((pool_low + pool_high) / 2, 2)
+            condition = f"NO TRADE — Awaiting Liquidity Sweep at ${pool_low:.2f}–${pool_high:.2f} ({unswept_type})"
+            rationale = (
+                f"Liquidity Sweep Framework: No qualified trade setup active. "
+                f"Institutional order flow requires price to first sweep retail stop-loss liquidity "
+                f"resting in the pool at ${pool_low:.2f}–${pool_high:.2f} ({unswept_type}) and confirm a Market Structure Shift (BOS) "
+                f"before entering. Capital preserved while monitoring for sweep."
+            )
+            return {
+                "no_trade": True,
+                "entry_price": None,
+                "stop_loss_price": None,
+                "take_profit_price": None,
+                "risk_reward_ratio": "N/A",
+                "potential_gain_pct": 0,
+                "potential_risk_pct": 0,
+                "condition": condition,
+                "rationale": rationale,
+                "liquidity_price": unswept_mid,
+                "liquidity_price_low": pool_low,
+                "liquidity_price_high": pool_high,
+                "liquidity_type": unswept_type,
+                "liquidity_status": "Awaiting Sweep",
+            }
+
     else:  # smc_fvg_ob
         fvg_entry = None
         fvg_sl = None
@@ -348,7 +570,7 @@ def _compute_strategy_setup(strategy: str, df: pd.DataFrame, ticker: str = "") -
 
 def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 365) -> Dict[str, Any]:
     ticker = ticker.upper().strip()
-    cache_key = f"backtest:v4:{ticker}:{strategy}:{lookback_days}"
+    cache_key = f"backtest:v6:{ticker}:{strategy}:{lookback_days}"
     cached = get_cached(cache_key)
     if cached:
         return cached
@@ -470,6 +692,52 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
             elif regime == "DOWNTREND":
                 signals.iloc[i] = -1
 
+    elif strategy == "liquidity_sweep":
+        # Liquidity Sweep: Institutional stop-hunt framework
+        # Phase 1 – Detect Equal Highs / Equal Lows liquidity pools
+        # Phase 2 – Identify sweep candle (wick past level, body closes back inside)
+        # Phase 3 – Confirm LTF Market Structure Shift (BOS) using 5-bar swing high break
+        # Phase 4 – Entry at Demand/Supply POI (origin of BOS impulse candle)
+        # Phase 5 – Target opposing liquidity pool at 3:1 R:R minimum
+        eq_window = 5       # bars to look back for equal highs/lows matching
+        tol = 0.0025        # 0.25% tolerance for "equal"
+
+        for i in range(50, len(df)):
+            # --- Pool Detection: Equal Lows (bullish sweep setup) ---
+            recent_lows = df["low"].iloc[max(0, i - eq_window) : i]
+            if len(recent_lows) < 3:
+                continue
+            low_min = float(recent_lows.min())
+            low_max = float(recent_lows.max())
+            has_eql = (low_max - low_min) / max(low_min, 0.01) < tol
+
+            if not has_eql:
+                continue
+
+            # --- Phase 2: Sweep candle — wick below EQL, body closes back above ---
+            candle = df.iloc[i]
+            sweep_low = low_min
+            swept_below = float(candle["low"]) < sweep_low
+            body_above = float(candle["close"]) > sweep_low
+            if not (swept_below and body_above):
+                continue
+
+            # --- Phase 3: BOS on next bar(s) — close above 5-bar swing high ---
+            swing_high_5 = float(df["high"].iloc[max(0, i - 5) : i].max())
+            bos_found = False
+            bos_bar = -1
+            for j in range(i + 1, min(i + 6, len(df))):
+                if float(df.iloc[j]["close"]) > swing_high_5:
+                    bos_found = True
+                    bos_bar = j
+                    break
+            if not bos_found:
+                continue
+
+            # Only emit signal on bos_bar
+            if bos_bar < len(signals):
+                signals.iloc[bos_bar] = 1
+
     # Simulate trades with Risk/Reward management
     trades = []
     in_trade = False
@@ -495,7 +763,7 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
                 in_trade = True
                 entry_price = curr_price
                 entry_time = curr_time
-                if strategy == "swing_structure":
+                if strategy in ("swing_structure", "liquidity_sweep"):
                     recent_low = float(df["low"].iloc[max(0, i - 10) : i].min())
                     risk = max(curr_atr * 1.2, entry_price - recent_low)
                     stop_loss = round(entry_price - risk, 2)
@@ -506,8 +774,8 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
                     stop_loss = round(entry_price - risk, 2)
                     take_profit = round(entry_price + (2.0 * risk), 2)
         else:
-            # Trailing stop management for swing_structure
-            if strategy == "swing_structure":
+            # Trailing stop management for swing_structure / liquidity_sweep
+            if strategy in ("swing_structure", "liquidity_sweep"):
                 if not breakeven_reached and curr_high >= entry_price + (1.5 * risk):
                     stop_loss = max(stop_loss, entry_price)
                     breakeven_reached = True
@@ -567,6 +835,7 @@ def run_backtest(ticker: str, strategy: str = "ema_cross", lookback_days: int = 
         "bollinger_breakout": "Bollinger Bands Breakout",
         "smc_fvg_ob": "Smart Money Concepts (FVG & Order Block)",
         "swing_structure": "Multi-Timeframe Swing Structure",
+        "liquidity_sweep": "Liquidity Sweep (EQL/EQH Stop Hunt)",
     }
     strategy_display_name = strategy_display_names.get(strategy, strategy)
     setup_data = _compute_strategy_setup(strategy, df, ticker=ticker)
